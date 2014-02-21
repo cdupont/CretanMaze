@@ -12,10 +12,12 @@ import Text.Printf
 import Control.Monad
 import Diagrams.Backend.CmdLine 
 import Control.Lens (_1)
+import Diagrams.TwoD.Vector     (perp)
+import Data.Default.Class
 
 --main = mainWith $ animEnvelope $ rotateBy (1/4) $ movie $ map animArcN [0..7]
 --main = mainWith $ (strokeLocTrail (offsetTrail 1 (fromOffsets [(0 ^& 1)])) # lc green # lw 0.1 :: Diagram B R2) <> (strokeLocTrail (fromOffsets [(0 ^& 1)]) # lc blue # lw 0.1)
-main = mainWith $ res 7 
+main = mainWith $ pad 1.01 $ rotateBy (1/4) $  res 7 
 
 hat :: Located (Trail R2)
 hat = fromOffsets [0 ^& 1, 1 ^& 0, 0 ^& (-1)]
@@ -45,8 +47,9 @@ node = circle 0.01 # fc red
 drawpts = position $ zip initpts (repeat node)
 drawlines = fromVertices $ map p2 [(0,0), (0,2)]
 drawarcs = translate (2*unitX + 2*unitY) $ arc (0.5 @@ turn) (0.75 @@ turn)
+drawSquares = strokeLocTrail $ fromOffsets [(-1) ^& 0, 0 ^& 1] `at` (2 ^& 1)
 
-initdraw = lc red $ fc red $ lw 0.1 $ mconcat $ rep4 $ drawlines <> drawarcs <> drawpts
+initdraw = lc green $ fc green $ lw 0.1 $ mconcat $ rep4 $ drawlines <> drawSquares <> drawpts
 
 allpts = mconcat $ rep4 initpts
 
@@ -57,7 +60,7 @@ arc0' :: Located (Trail R2)
 arc0' = translate (r2 (2, 1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
 
 arc0'' :: Located (Trail R2)
-arc0'' = fromOffsets [(0.5) ^& 0, 0 ^& 1, (-0.5) ^& 0] `at` (2 ^& 0) --translate (r2 (2, 1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
+arc0'' = fromOffsets [(1) ^& 0, 0 ^& 1, (-1) ^& 0] `at` (2 ^& 0) --translate (r2 (2, 1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
 
 arcCaps' arcP (p1:p2:_) (r1:r2:_) = arcCaps arcP r2 r1 p2 p1
 arcCaps' _ _ _ = error "lists must contain at least 2 points each"
@@ -76,12 +79,12 @@ shiftList n as = (drop n as) ++ (take n as)
 capStart :: Located (Trail R2) -> P2 -> P2 -> Trail R2
 capStart lt startPt center = if (close 0.0001 startPt (atStart lt)) 
    then mempty
-   else capArc 1 center startPt (atStart lt) 
+   else capSquare 1 center startPt (atStart lt) 
 
 capEnd :: Located (Trail R2) -> P2 -> P2 -> Trail R2
 capEnd lt endPt center = if (close 0.0001 endPt (atEnd lt)) 
    then mempty
-   else capArc 1 center (atEnd lt) endPt                    
+   else capSquare 1 center (atEnd lt) endPt                    
 
 
 arcCaps :: Located (Trail R2) -> P2 -> P2 -> P2 -> P2 -> Located (Trail R2)
@@ -89,7 +92,7 @@ arcCaps arcP startP startR endP endR =
    mconcat [capStart offs startP startR, 
             unLoc offs, 
             capEnd offs endP endR] `at` startP where
-     offs = offsetTrail 1 arcP
+     offs = offsetTrail' (def & offsetJoin .~ LineJoinBevel) 1 arcP
 
 showParams :: Located (Trail R2) -> Diagram B R2
 showParams lt = position $ map (\i -> (atParam lt i, dot i)) [0,0.025.. 1]
@@ -117,6 +120,13 @@ arcV u v = arc (direction u) (direction v)
 
 arcVCW :: (TrailLike t, V t ~ R2) => R2 -> R2 -> t
 arcVCW u v = arcCW (direction u) (direction v)
+
+
+-- | Builds a cap with a square centered on the end.
+capSquare :: Double -> P2 -> P2 -> P2 -> Trail R2
+capSquare _r c a b = unLoc $ fromVertices [ a, a .+^ v, b ] --, b .+^ v
+   where
+       v = perp (a .-. c)
 
 animMain :: Animation SVG R2 -> IO ()
 animMain = mainWith
