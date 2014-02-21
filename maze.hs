@@ -10,16 +10,30 @@ import Diagrams.Backend.SVG.CmdLine
 import Diagrams.TwoD.Offset
 import Text.Printf
 import Control.Monad
-import Diagrams.Backend.CmdLine
+import Diagrams.Backend.CmdLine 
 import Control.Lens (_1)
 
-main = mainWith $ rotateBy (1/4) $ anim
+--main = mainWith $ animEnvelope $ rotateBy (1/4) $ movie $ map animArcN [0..7]
+--main = mainWith $ (strokeLocTrail (offsetTrail 1 (fromOffsets [(0 ^& 1)])) # lc green # lw 0.1 :: Diagram B R2) <> (strokeLocTrail (fromOffsets [(0 ^& 1)]) # lc blue # lw 0.1)
+main = mainWith $ res 7 
 
-frames :: [Diagram B R2]
-frames = initdraw : (map res [0..7])
+hat :: Located (Trail R2)
+hat = fromOffsets [0 ^& 1, 1 ^& 0, 0 ^& (-1)]
+--[(0.5) ^& 0, 0 ^& (-1), (-0.5) ^& 0]
 
-anim :: Animation B R2
-anim = animEnvelope $ discrete $ frames
+--main = mainWith $ (res 1 :: Diagram B R2) 
+
+--hat :: Located (Trail R2)
+--hat = fromOffsets [(1 ^& 1), (1 ^& (-1))] --translate (r2 (2, 1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
+
+animArcN :: Int -> Animation B R2
+animArcN n = (res (n-1) <>) <$> (animLT $ arcN' n) # lc green # lw 0.1
+
+animLT :: Located (Trail R2) -> Animation B R2
+animLT lt = strokeLocTrail . section lt 0 <$> ui
+
+res :: Int -> Diagram B R2   
+res n = initdraw <> (mconcat $ map strokeLocTrail (allArcs n)) # lc green # lw 0.1
 
 initpts = map p2 [(2,0),(2,1),(2,2),(1,2)]
 
@@ -27,7 +41,7 @@ rep4 :: (Transformable t, V t ~ R2) => t -> [t]
 rep4 a = map (flip rotateBy a) [0, 1/4, 2/4, 3/4]
 
 node, drawpts, drawlines, drawarcs :: Diagram B R2
-node = circle 0.01
+node = circle 0.01 # fc red
 drawpts = position $ zip initpts (repeat node)
 drawlines = fromVertices $ map p2 [(0,0), (0,2)]
 drawarcs = translate (2*unitX + 2*unitY) $ arc (0.5 @@ turn) (0.75 @@ turn)
@@ -39,17 +53,23 @@ allpts = mconcat $ rep4 initpts
 arc0 :: Located (Trail R2)
 arc0 = translate (r2 (2, 1+1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
 
-res :: Int -> Diagram B R2   
-res n = initdraw <> (mconcat $ map strokeLocTrail (allArcs n)) # lc green # lw 0.1 # fc red
+arc0' :: Located (Trail R2)
+arc0' = translate (r2 (2, 1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
+
+arc0'' :: Located (Trail R2)
+arc0'' = fromOffsets [(0.5) ^& 0, 0 ^& 1, (-0.5) ^& 0] `at` (2 ^& 0) --translate (r2 (2, 1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
 
 arcCaps' arcP (p1:p2:_) (r1:r2:_) = arcCaps arcP r2 r1 p2 p1
 arcCaps' _ _ _ = error "lists must contain at least 2 points each"
 
-arcN :: [P2] -> Int -> Located (Trail R2)
-arcN ap 0 = arc0
-arcN ap n = arcCaps' (arcN ap (n-1)) (drop (n-1) ap) (drop (n-1) (reverse ap))
+arcN :: [P2] -> Located (Trail R2) -> Int -> Located (Trail R2)
+arcN _  a0 0 = a0
+arcN ap a0 n = arcCaps' (arcN ap a0 (n-1)) (drop (n-1) ap) (drop (n-1) (reverse ap))
 
-allArcs n = map (arcN $ shiftList 2 allpts) [0..n]
+arcN' :: Int -> Located (Trail R2)
+arcN' = arcN (shiftList 1 allpts) arc0''
+
+allArcs n = map arcN' [0..n]
 
 shiftList n as = (drop n as) ++ (take n as)
 
@@ -70,8 +90,6 @@ arcCaps arcP startP startR endP endR =
             unLoc offs, 
             capEnd offs endP endR] `at` startP where
      offs = offsetTrail 1 arcP
-
-
 
 showParams :: Located (Trail R2) -> Diagram B R2
 showParams lt = position $ map (\i -> (atParam lt i, dot i)) [0,0.025.. 1]
