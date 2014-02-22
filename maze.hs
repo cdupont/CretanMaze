@@ -2,10 +2,12 @@
 {-# LANGUAGE NoMonomorphismRestriction, TypeFamilies, TupleSections, 
   TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 
 module Main where
 
-import Diagrams.Prelude
+import Diagrams.Prelude hiding (lineCap, lineJoin, option, value, (<>))
+import qualified Diagrams.Prelude as D
 import Diagrams.Backend.SVG.CmdLine
 import Diagrams.TwoD.Offset
 import Text.Printf
@@ -14,25 +16,46 @@ import Diagrams.Backend.CmdLine
 import Control.Lens (_1, (^.))
 import Diagrams.TwoD.Vector     (perp)
 import Data.Default.Class
+import Options.Applicative hiding ((&))
+import Safe hiding (at)
+import Data.Active
+
+newtype Maze a = Maze (MazeOpts -> a)
+
+data MazeStyle = Round | Square | SquareCut
+   deriving (Read, Show)
+deriving instance Read LineJoin
+
+
+data MazeOpts = MazeOpts { lineJoin :: LineJoin,
+                  lineCap :: MazeStyle,
+                  seedStyle :: MazeStyle,
+                  seedPos :: Int}
+                  
+instance Parseable MazeOpts where
+   parser = MazeOpts <$> option (value LineJoinRound <> short 'j' <> long "join" <> metavar "<LineJoinMiter|LineJoinRound|LineJoinBevel>" <> help "Style of the joins (choose one)")
+                     <*> option (value Round <> short 'c' <> long "cap" <> metavar "<StyleRound|StyleSquare|StyleSquareCut>" <> help "Style of the caps (choose one)")
+                     <*> option (value Round <> long "seed" <> short 's' <> metavar "<StyleRound|StyleSquare|StyleSquareCut>" <> help "Style of the seed (choose one)")
+                     <*> option (value 0 <> long "seedPos" <> short 'p' <> metavar "<0|1>" <> help "Position of the seed (0 or 1)")
+
+instance Mainable (Maze (Diagram SVG R2)) where
+   type MainOpts (Maze (Diagram SVG R2)) = (MainOpts (Diagram SVG R2), MazeOpts)
+   mainRender (opts, mazeOpts) (Maze d) = mainRender opts (maze mazeOpts)
 
 --main = mainWith $ animEnvelope $ rotateBy (1/4) $ movie $ map animArcN [0..7]
-main = mainWith $ pad 1.01 $ rotateBy (1/4) $ res (def & expandJoin .~ LineJoinRound & expandCap .~ LineCapSquare) 7 
--- LineJoin = LineJoinMiter    -- ^ Use a \"miter\" shape (whatever that is).
---              | LineJoinRound    -- ^ Use rounded join points.
---              | LineJoinBevel 
--- | What sort of shape should be placed at the endpoints of lines?
--- data LineCap = LineCapButt   -- ^ Lines end precisely at their endpoints.
---              | LineCapRound  -- ^ Lines are capped with semicircles
---              | LineCapSquare -- ^ Lines are capped with a squares
+main = mainWith $ Maze maze
 
-animArcN :: ExpandOpts -> Int -> Animation B R2
+maze :: MazeOpts -> Diagram B R2
+maze opts = pad 1.01 $ rotateBy (1/4) $ res opts 7 
+
+animArcN :: MazeOpts -> Int -> Animation B R2
 animArcN opts n = (res opts (n-1) <>) <$> (animLT $ arcN' opts n) # lc green # lw 0.1
 
 animLT :: Located (Trail R2) -> Animation B R2
 animLT lt = strokeLocTrail . section lt 0 <$> ui
 
-res :: ExpandOpts -> Int -> Diagram B R2   
-res opts n = (initDraw opts # lc green # lw 0.1) <> (mconcat $ map strokeLocTrail (allArcs opts n)) # lc green # lw 0.1
+res :: MazeOpts -> Int -> Diagram B R2   
+res opts n = (initDraw (lineCap opts) # lc green # lw 0.1) <> (mconcat $ map strokeLocTrail (allArcs opts n)) # lc green # lw 0.1
 
 initpts = map p2 [(2,0),(2,1),(2,2),(1,2)]
 
@@ -42,71 +65,77 @@ rep4 a = map (flip rotateBy a) [0, 1/4, 2/4, 3/4]
 drawPts :: Diagram B R2
 drawPts = position $ zip initpts $ repeat (circle 0.01 # fc red)
 
-initLines, initRound, initMiter, initBevel :: Located (Trail R2) 
+initLines, initRound, initSquare, initSquareCut :: Located (Trail R2) 
 initLines = fromVertices $ map p2 [(0,0), (0,2)]
 initRound = translate (2*unitX + 2*unitY) $ arc (0.5 @@ turn) (0.75 @@ turn)
-initMiter = fromOffsets [(-1) ^& 0, 0 ^& 1] `at` (2 ^& 1)
-initBevel = fromOffsets [(-0.5) ^& 0, (-0.5) ^& 0.5, 0 ^& 0.5] `at` (2 ^& 1)
+initSquare = fromOffsets [(-1) ^& 0, 0 ^& 1] `at` (2 ^& 1)
+initSquareCut = fromOffsets [(-0.5) ^& 0, (-0.5) ^& 0.5, 0 ^& 0.5] `at` (2 ^& 1)
 
-initDraw :: ExpandOpts -> Diagram B R2
+initDraw :: MazeStyle -> Diagram B R2
 initDraw opts = mconcat $ rep4 $ mconcat $ strokeLocTrail <$> [initLines, initCorner opts]
 
-initCorner (ExpandOpts LineJoinMiter _ _ _) = initMiter
-initCorner (ExpandOpts LineJoinRound _ _ _) = initRound
-initCorner (ExpandOpts LineJoinBevel _ _ _) = initBevel
+initCorner :: MazeStyle -> Located (Trail R2)
+initCorner Round     = initRound
+initCorner Square    = initSquare
+initCorner SquareCut = initSquareCut
 
 allpts = mconcat $ rep4 initpts
 
-roundSeed :: Located (Trail R2)
-roundSeed = translate (r2 (2, 1+1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
+roundSeed :: Trail R2
+roundSeed = (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
 
-roundSeed' :: Located (Trail R2)
-roundSeed' = translate (r2 (2, 1/2)) (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
-
-squareSeed :: Located (Trail R2)
-squareSeed = fromOffsets [(1) ^& 0, 0 ^& 1, (-1) ^& 0] `at` (2 ^& 0)
+squareSeed :: Trail R2
+squareSeed = fromVertices [(1) ^& 0, 0 ^& 1, (-1) ^& 0]
 
 arcCaps' opts arcP (p1:p2:_) (r1:r2:_) = arcCaps opts arcP r2 r1 p2 p1
 arcCaps' _ _ _ _ = error "lists must contain at least 2 points each"
 
-arcN :: [P2] -> ExpandOpts -> Int -> Located (Trail R2)
-arcN _  opts 0 = selectSeed opts
+arcN :: [P2] -> MazeOpts -> Int -> Located (Trail R2)
+arcN _  opts 0 = posSeed (seedPos opts) $ selectSeed (seedStyle opts)
 arcN ap opts n = arcCaps' opts (arcN ap opts (n-1)) (drop (n-1) ap) (drop (n-1) (reverse ap))
 
-arcN' :: ExpandOpts -> Int -> Located (Trail R2)
-arcN' opts i = arcN (shiftList 1 allpts) opts i
+arcN' :: MazeOpts -> Int -> Located (Trail R2)
+arcN' opts i = arcN (ptsList (seedPos opts)) opts i
 
-selectSeed :: ExpandOpts -> Located (Trail R2)
-selectSeed (ExpandOpts LineJoinMiter _ _ _) = squareSeed
-selectSeed (ExpandOpts LineJoinRound _ _ _) = roundSeed'
-selectSeed (ExpandOpts LineJoinBevel _ _ _) = squareSeed
+selectSeed :: MazeStyle -> Trail R2
+selectSeed Round     = roundSeed  
+selectSeed Square    = squareSeed
+selectSeed SquareCut = squareSeed
 
-allArcs :: ExpandOpts -> Int -> [Located (Trail R2)]
+posSeed :: Int -> Trail R2 -> Located (Trail R2)
+posSeed 0 tr = tr `at` (2 ^& 0)
+posSeed 1 tr = tr `at` (2 ^& 1)
+posSeed _ _ = error "seed position can be only 0 or 1"
+
+ptsList :: Int -> [P2]
+ptsList i = shiftList (i+1) allpts
+
+allArcs :: MazeOpts -> Int -> [Located (Trail R2)]
 allArcs opts n = map (arcN' opts) [0..n]
 
 shiftList n as = (drop n as) ++ (take n as)
 
-capStart :: LineCap -> Located (Trail R2) -> P2 -> P2 -> Trail R2
+capStart :: MazeStyle -> Located (Trail R2) -> P2 -> P2 -> Trail R2
 capStart lc lt startPt center = if (close 0.0001 startPt (atStart lt)) 
    then mempty
    else fromLineCap lc center startPt (atStart lt) 
 
-capEnd :: LineCap -> Located (Trail R2) -> P2 -> P2 -> Trail R2
+capEnd :: MazeStyle -> Located (Trail R2) -> P2 -> P2 -> Trail R2
 capEnd lc lt endPt center = if (close 0.0001 endPt (atEnd lt))
    then mempty
    else fromLineCap lc center (atEnd lt) endPt                    
 
-fromLineCap :: LineCap -> P2 -> P2 -> P2 -> Trail R2
+fromLineCap :: MazeStyle -> P2 -> P2 -> P2 -> Trail R2
 fromLineCap c = case c of
-    LineCapButt   -> capCut 1 -- This cap does not allow to join the next point 
-    LineCapRound  -> capArc 1 
-    LineCapSquare -> capSquare 1
+    SquareCut -> capCut 1 
+    Round     -> capArc 1 
+    Square    -> capSquare 1
 
-arcCaps :: ExpandOpts -> Located (Trail R2) -> P2 -> P2 -> P2 -> P2 -> Located (Trail R2)
+arcCaps :: MazeOpts -> Located (Trail R2) -> P2 -> P2 -> P2 -> P2 -> Located (Trail R2)
 arcCaps opts arcP startP startR endP endR = 
-   mconcat [capStart (opts ^. expandCap) offs startP startR, 
+   mconcat [capStart (lineCap opts) offs startP startR, 
             unLoc offs, 
-            capEnd (opts ^. expandCap) offs endP endR] `at` startP where
+            capEnd (lineCap opts) offs endP endR] `at` startP where
      offs = offsetTrail' (toOffsetOpts opts) 1 arcP
 
 showParams :: Located (Trail R2) -> Diagram B R2
@@ -120,8 +149,8 @@ showVertices lt = position $ (, circle 0.1 # fc red) <$> (join $ pathVertices lt
 
 close eps a b = a `distanceSq` b <= eps*eps
 
-toOffsetOpts :: ExpandOpts -> OffsetOpts
-toOffsetOpts (ExpandOpts join miterLimit _ epsilon) = OffsetOpts join miterLimit epsilon
+toOffsetOpts :: MazeOpts -> OffsetOpts
+toOffsetOpts (MazeOpts lj _ _ _) = def & offsetJoin .~ lj
 
 -- | Builds an arc to fit with a given radius, center, start, and end points.
 -- --   A Negative r means a counter-clockwise arc
