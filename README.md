@@ -6,9 +6,9 @@ More info in this [blog post](http://www.corentindupont.info/blog/posts/2014-02-
 
 ## Install
 
-    git clone git@github.com:cdupont/diagrams.git
-    cd diagrams
-    ghc -make 
+    git clone git@github.com:cdupont/CretanMaze.git
+    cd CretanMaze
+    ghc --make maze.hs -o maze
 
 ## Usage
 
