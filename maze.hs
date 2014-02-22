@@ -1,9 +1,7 @@
 
-{-# LANGUAGE NoMonomorphismRestriction, TypeFamilies, TupleSections, 
-  TypeSynonymInstances #-}
-{-# LANGUAGE FlexibleInstances         #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE UndecidableInstances         #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Main where
 
@@ -20,8 +18,8 @@ import Options.Applicative hiding ((&))
 import Text.Read
 import qualified Text.Read.Lex as L
 
-data Maze = Maze {image :: MazeOpts -> Diagram B R2, 
-                     animation  :: MazeOpts -> Animation B R2}
+data Maze = Maze {image      :: MazeOpts -> Diagram B R2, 
+                  animation  :: MazeOpts -> Animation B R2}
 
 data MazeStyle = Round | Square | SquareCut
    deriving (Read, Show)
@@ -33,30 +31,13 @@ data MazeOpts = MazeOpts { lineJoin :: LineJoin,   -- style used when offseting 
                            anim :: Bool}           -- generated animation
                 deriving (Show)
                   
-instance Parseable MazeOpts where
-   parser = MazeOpts 
-      <$> option (value LineJoinRound <> short 'j' <> long "join" <> metavar "<Miter|Round|Bevel>" 
-          <> help "Style of the joins (choose one)")
-      <*> option (value Round <> short 'c' <> long "cap" <> metavar "<Round|Square|SquareCut>" 
-          <> help "Style of the caps (choose one)")
-      <*> option (value Round <> short 'd' <> long "seed" <> metavar "<Round|Square|SquareCut>" 
-          <> help "Style of the seed (choose one)")
-      <*> option (value 0 <> short 'p' <> long "seedPos" <> metavar "<0|1>" 
-          <> help "Position of the seed (0 or 1)")
-      <*> switch (short 'a' <> long "animation" 
-          <> help "generate an animation")
-
-instance Mainable Maze where
-   type MainOpts Maze = (MainOpts (Diagram SVG R2), (DiagramAnimOpts, MazeOpts))
-   mainRender (opts, (animOpts, mazeOpts@(MazeOpts _ _ _ _ True))) _ = defaultAnimMainRender (_1 . output) (opts, animOpts) (animMaze mazeOpts)
-   mainRender (opts, (_, mazeOpts@(MazeOpts _ _ _ _ False))) _ = mainRender opts (maze mazeOpts) 
-
-
 main = mainWith $ Maze maze animMaze
 
+-- create a picture of the maze
 maze :: MazeOpts -> Diagram B R2
 maze opts = pad 1.01 $ rotateBy (1/4) $ res opts 7
 
+-- create an animation for the maze
 animMaze :: MazeOpts -> Animation B R2
 animMaze opts = animEnvelope $ rotateBy (1/4) $ movie $ map (animArcN opts) [0..7]
 
@@ -225,4 +206,22 @@ instance Read LineJoin where
            "Bevel" -> return LineJoinBevel
            _       -> pfail
     )
+
+instance Parseable MazeOpts where
+   parser = MazeOpts 
+      <$> option (value LineJoinRound <> short 'j' <> long "join" <> metavar "<Miter|Round|Bevel>" 
+          <> help "Style of the joins (choose one)")
+      <*> option (value Round <> short 'c' <> long "cap" <> metavar "<Round|Square|SquareCut>" 
+          <> help "Style of the caps (choose one)")
+      <*> option (value Round <> short 'd' <> long "seed" <> metavar "<Round|Square|SquareCut>" 
+          <> help "Style of the seed (choose one)")
+      <*> option (value 0 <> short 'p' <> long "seedPos" <> metavar "<0|1>" 
+          <> help "Position of the seed (0 or 1)")
+      <*> switch (short 'a' <> long "animation" 
+          <> help "generate an animation")
+
+instance Mainable Maze where
+   type MainOpts Maze = (MainOpts (Diagram SVG R2), (DiagramAnimOpts, MazeOpts))
+   mainRender (opts, (animOpts, mazeOpts@(MazeOpts _ _ _ _ True))) _ = defaultAnimMainRender (_1 . output) (opts, animOpts) (animMaze mazeOpts)
+   mainRender (opts, (_, mazeOpts@(MazeOpts _ _ _ _ False))) _ = mainRender opts (maze mazeOpts) 
 
