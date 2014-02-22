@@ -3,6 +3,7 @@
   TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE UndecidableInstances         #-}
 
 module Main where
 
@@ -18,9 +19,9 @@ import Data.Default.Class
 import Options.Applicative hiding ((&))
 import Text.Read
 import qualified Text.Read.Lex as L
-import Debug.Trace
 
-newtype Maze a = Maze (MazeOpts -> a)
+data Maze = Maze {image :: MazeOpts -> Diagram B R2, 
+                     animation  :: MazeOpts -> Animation B R2}
 
 data MazeStyle = Round | Square | SquareCut
    deriving (Read, Show)
@@ -28,7 +29,8 @@ data MazeStyle = Round | Square | SquareCut
 data MazeOpts = MazeOpts { lineJoin :: LineJoin,   -- style used when offseting the arcs
                            lineCap :: MazeStyle,   -- style used when linking the arcs to the connecting point
                            seedStyle :: MazeStyle, -- style used for the seed
-                           seedPos :: Int}         -- seed position (0 or 1)
+                           seedPos :: Int,         -- seed position (0 or 1)
+                           anim :: Bool}           -- generated animation
                 deriving (Show)
                   
 instance Parseable MazeOpts where
@@ -41,21 +43,16 @@ instance Parseable MazeOpts where
           <> help "Style of the seed (choose one)")
       <*> option (value 0 <> short 'p' <> long "seedPos" <> metavar "<0|1>" 
           <> help "Position of the seed (0 or 1)")
+      <*> switch (short 'a' <> long "animation" 
+          <> help "generate an animation")
 
-instance Mainable (Maze (Diagram SVG R2)) where
-   type MainOpts (Maze (Diagram SVG R2)) = (MainOpts (Diagram SVG R2), MazeOpts)
-   mainRender (opts, mazeOpts) _ = mainRender opts (maze mazeOpts)
+instance Mainable Maze where
+   type MainOpts Maze = (MainOpts (Diagram SVG R2), (DiagramAnimOpts, MazeOpts))
+   mainRender (opts, (animOpts, mazeOpts@(MazeOpts _ _ _ _ True))) _ = defaultAnimMainRender (_1 . output) (opts, animOpts) (animMaze mazeOpts)
+   mainRender (opts, (_, mazeOpts@(MazeOpts _ _ _ _ False))) _ = mainRender opts (maze mazeOpts) 
 
-instance Mainable (Maze (Animation SVG R2)) where
-   type MainOpts (Maze (Animation SVG R2)) = (MainOpts (Diagram SVG R2), (DiagramAnimOpts, MazeOpts))
-   mainRender (opts, (animOpts, mazeOpts)) _ = defaultAnimMainRender (_1 . output) (opts, animOpts) (animMaze mazeOpts)
 
-instance Mainable (Animation SVG R2) where
-   type MainOpts (Animation SVG R2) = (MainOpts (Diagram SVG R2), DiagramAnimOpts) 
-   mainRender = defaultAnimMainRender (_1 . output)
-
---main = mainWith $ animEnvelope $ rotateBy (1/4) $ movie $ map animArcN [0..7]
-main = mainWith $ Maze animMaze
+main = mainWith $ Maze maze animMaze
 
 maze :: MazeOpts -> Diagram B R2
 maze opts = pad 1.01 $ rotateBy (1/4) $ res opts 7
@@ -63,16 +60,19 @@ maze opts = pad 1.01 $ rotateBy (1/4) $ res opts 7
 animMaze :: MazeOpts -> Animation B R2
 animMaze opts = animEnvelope $ rotateBy (1/4) $ movie $ map (animArcN opts) [0..7]
 
-
+-- animate the nth arc (leaving previous arcs)
 animArcN :: MazeOpts -> Int -> Animation B R2
 animArcN opts n = (res opts (n-1) <>) <$> (animLT $ arcN' opts n) # lc green # lw 0.1
 
+--animate the drawing of a located trail
 animLT :: Located (Trail R2) -> Animation B R2
 animLT lt = strokeLocTrail . section lt 0 <$> ui
 
+--result drawing at step n
 res :: MazeOpts -> Int -> Diagram B R2   
 res opts n = (initDraw (lineCap opts) # lc green # lw 0.1) <> (mconcat $ map strokeLocTrail (allArcs opts n)) # lc green # lw 0.1
 
+--starting points
 initpts = map p2 [(2,0),(2,1),(2,2),(1,2)]
 
 rep4 :: (Transformable t, V t ~ R2) => t -> [t]
@@ -87,69 +87,80 @@ initRound = translate (2*unitX + 2*unitY) $ arc (0.5 @@ turn) (0.75 @@ turn)
 initSquare = fromOffsets [(-1) ^& 0, 0 ^& 1] `at` (2 ^& 1)
 initSquareCut = fromOffsets [(-0.5) ^& 0, (-0.5) ^& 0.5, 0 ^& 0.5] `at` (2 ^& 1)
 
+--initial drawing
 initDraw :: MazeStyle -> Diagram B R2
 initDraw opts = mconcat $ rep4 $ mconcat $ strokeLocTrail <$> [initLines, initCorner opts]
 
+--style of the initial drawing
 initCorner :: MazeStyle -> Located (Trail R2)
 initCorner Round     = initRound
 initCorner Square    = initSquare
 initCorner SquareCut = initSquareCut
 
+--all points used to connect arcs
 allpts = mconcat $ rep4 initpts
 
-roundSeed :: Trail R2
-roundSeed = (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
-
-squareSeed :: Trail R2
-squareSeed = fromOffsets [1 ^& 0, 0 ^& 1, (-1) ^& 0]
-
-squareCutSeed :: Trail R2
+--different style of seeds
+roundSeed, squareSeed, squareCutSeed :: Trail R2
+roundSeed     = (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
+squareSeed    = fromOffsets [1 ^& 0, 0 ^& 1, (-1) ^& 0]
 squareCutSeed = fromOffsets [0.5 ^& 0, 0.5 ^& 0.5, (-0.5) ^& 0.5, (-0.5) ^& 0]
 
-arcCaps' opts arcP (p1:p2:_) (r1:r2:_) = arcCaps opts arcP r2 r1 p2 p1
-arcCaps' _ _ _ _ = error "lists must contain at least 2 points each"
-
-arcN :: [P2] -> MazeOpts -> Int -> Located (Trail R2)
-arcN _  opts 0 = posSeed (seedPos opts) $ selectSeed (seedStyle opts)
-arcN ap opts n = arcCaps' opts (arcN ap opts (n-1)) (drop (n-1) ap) (drop (n-1) (reverse ap))
-
-arcN' :: MazeOpts -> Int -> Located (Trail R2)
-arcN' opts i = arcN (ptsList (seedPos opts)) opts i
-
+-- select style of seed
 selectSeed :: MazeStyle -> Trail R2
 selectSeed Round     = roundSeed  
 selectSeed Square    = squareSeed
 selectSeed SquareCut = squareCutSeed
 
+--helper for arc + caps
+arcCaps' opts arcP (p1:p2:_) (r1:r2:_) = arcCaps opts arcP r2 r1 p2 p1
+arcCaps' _ _ _ _ = error "lists must contain at least 2 points each"
+
+-- recursive function drawing the nth arc
+arcN :: [P2] -> MazeOpts -> Int -> Located (Trail R2)
+arcN _  opts 0 = posSeed (seedPos opts) $ selectSeed (seedStyle opts)
+arcN ap opts n = arcCaps' opts (arcN ap opts (n-1)) (drop (n-1) ap) (drop (n-1) (reverse ap))
+
+-- draw the nth arc
+arcN' :: MazeOpts -> Int -> Located (Trail R2)
+arcN' opts i = arcN (ptsList (seedPos opts)) opts i
+
+-- two possibilities for the position of the seed
 posSeed :: Int -> Trail R2 -> Located (Trail R2)
 posSeed 0 tr = tr `at` (2 ^& 0)
 posSeed 1 tr = tr `at` (2 ^& 1)
 posSeed _ _ = error "seed position can be only 0 or 1"
 
+-- the list of connector points must be shifted as well
 ptsList :: Int -> [P2]
 ptsList i = shiftList (i+1) allpts
 
+shiftList n as = (drop n as) ++ (take n as)
+
+-- draw all the arcs up to n
 allArcs :: MazeOpts -> Int -> [Located (Trail R2)]
 allArcs opts n = map (arcN' opts) [0..n]
 
-shiftList n as = (drop n as) ++ (take n as)
-
+--draw the initial cap if needed
 capStart :: MazeStyle -> Located (Trail R2) -> P2 -> P2 -> Trail R2
 capStart lc lt startPt center = if (close 0.0001 startPt (atStart lt)) 
    then mempty
    else fromLineCap lc center startPt (atStart lt) 
 
+--draw the final cap if needed
 capEnd :: MazeStyle -> Located (Trail R2) -> P2 -> P2 -> Trail R2
 capEnd lc lt endPt center = if (close 0.0001 endPt (atEnd lt))
    then mempty
    else fromLineCap lc center (atEnd lt) endPt                    
 
+--choose the cap style
 fromLineCap :: MazeStyle -> P2 -> P2 -> P2 -> Trail R2
 fromLineCap c = case c of
     SquareCut -> capCut 1 
     Round     -> capArc 1 
     Square    -> capSquare 1
 
+--offset an arc and add the necessary caps
 arcCaps :: MazeOpts -> Located (Trail R2) -> P2 -> P2 -> P2 -> P2 -> Located (Trail R2)
 arcCaps opts arcP startP startR endP endR = 
    mconcat [capStart (lineCap opts) offs startP startR, 
@@ -169,7 +180,7 @@ showVertices lt = position $ (, circle 0.1 # fc red) <$> (join $ pathVertices lt
 close eps a b = a `distanceSq` b <= eps*eps
 
 toOffsetOpts :: MazeOpts -> OffsetOpts
-toOffsetOpts (MazeOpts lj _ _ _) = def & offsetJoin .~ lj
+toOffsetOpts (MazeOpts lj _ _ _ _) = def & offsetJoin .~ lj
 
 -- | Builds an arc to fit with a given radius, center, start, and end points.
 -- --   A Negative r means a counter-clockwise arc
@@ -203,10 +214,6 @@ capCut _r c a b = unLoc $ fromVertices [ a, a .+^ (v/2), b .+^ (v2/2),  b ] --, 
 -- | Builds a cap that directly connects the ends.
 capCut' :: Double -> P2 -> P2 -> P2 -> Trail R2
 capCut' _r _c a b = fromSegments [straight (b .-. a)]
-
---instance Mainable (Animation SVG R2) where
---   type MainOpts (Animation SVG R2) = (MainOpts (Diagram SVG R2), DiagramAnimOpts) 
---   mainRender = defaultAnimMainRender (_1 . output)
 
 instance Read LineJoin where
    readPrec =
