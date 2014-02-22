@@ -1,8 +1,10 @@
 
 # A Cretan Labyrinth generator
 
-This little program generate Cretan Labyrinths. The various parameters allow to generate one of the two possible labyrinth, with various styles (round, square, spiky...). It is also possible to create an animation showing how to draw the labyrinth.
+This little program generates Cretan Labyrinths. The various parameters allow to generate one of the two possible labyrinth, with various styles (round, square, spiky...). It is also possible to create an animation showing how to draw the labyrinth.
 More info in this [blog post](http://www.corentindupont.info/blog/posts/2014-02-17-Cretan-Maze.html).
+
+![Round style](/doc/maze-round.png "Round style")
 
 ## Install
 
@@ -34,7 +36,7 @@ Available options:
 The options j, c and d are used to control the style of the joins (how to link two segment of line), caps (how to link a segment of line and a point) and the seed.
 The option p is used to choose one of the two possible placement for the seed.
 
-Here are some examples:
+Here are some examples of generation:
 
     ./maze -w 400 -o maze.svg
 
