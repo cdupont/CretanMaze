@@ -6,47 +6,63 @@
 
 module Main where
 
-import Diagrams.Prelude hiding (lineCap, lineJoin, option, value, (<>))
-import qualified Diagrams.Prelude as D
+import Diagrams.Prelude hiding (lineCap, lineJoin, option, value, (<>), trace)
 import Diagrams.Backend.SVG.CmdLine
 import Diagrams.TwoD.Offset
 import Text.Printf
 import Control.Monad
 import Diagrams.Backend.CmdLine 
-import Control.Lens (_1, (^.))
+import Control.Lens (_1)
 import Diagrams.TwoD.Vector     (perp)
 import Data.Default.Class
 import Options.Applicative hiding ((&))
-import Safe hiding (at)
-import Data.Active
+import Text.Read
+import qualified Text.Read.Lex as L
+import Debug.Trace
 
 newtype Maze a = Maze (MazeOpts -> a)
 
 data MazeStyle = Round | Square | SquareCut
    deriving (Read, Show)
-deriving instance Read LineJoin
 
-
-data MazeOpts = MazeOpts { lineJoin :: LineJoin,
-                  lineCap :: MazeStyle,
-                  seedStyle :: MazeStyle,
-                  seedPos :: Int}
+data MazeOpts = MazeOpts { lineJoin :: LineJoin,   -- style used when offseting the arcs
+                           lineCap :: MazeStyle,   -- style used when linking the arcs to the connecting point
+                           seedStyle :: MazeStyle, -- style used for the seed
+                           seedPos :: Int}         -- seed position (0 or 1)
+                deriving (Show)
                   
 instance Parseable MazeOpts where
-   parser = MazeOpts <$> option (value LineJoinRound <> short 'j' <> long "join" <> metavar "<LineJoinMiter|LineJoinRound|LineJoinBevel>" <> help "Style of the joins (choose one)")
-                     <*> option (value Round <> short 'c' <> long "cap" <> metavar "<StyleRound|StyleSquare|StyleSquareCut>" <> help "Style of the caps (choose one)")
-                     <*> option (value Round <> long "seed" <> short 's' <> metavar "<StyleRound|StyleSquare|StyleSquareCut>" <> help "Style of the seed (choose one)")
-                     <*> option (value 0 <> long "seedPos" <> short 'p' <> metavar "<0|1>" <> help "Position of the seed (0 or 1)")
+   parser = MazeOpts 
+      <$> option (value LineJoinRound <> short 'j' <> long "join" <> metavar "<Miter|Round|Bevel>" 
+          <> help "Style of the joins (choose one)")
+      <*> option (value Round <> short 'c' <> long "cap" <> metavar "<Round|Square|SquareCut>" 
+          <> help "Style of the caps (choose one)")
+      <*> option (value Round <> short 'd' <> long "seed" <> metavar "<Round|Square|SquareCut>" 
+          <> help "Style of the seed (choose one)")
+      <*> option (value 0 <> short 'p' <> long "seedPos" <> metavar "<0|1>" 
+          <> help "Position of the seed (0 or 1)")
 
 instance Mainable (Maze (Diagram SVG R2)) where
    type MainOpts (Maze (Diagram SVG R2)) = (MainOpts (Diagram SVG R2), MazeOpts)
-   mainRender (opts, mazeOpts) (Maze d) = mainRender opts (maze mazeOpts)
+   mainRender (opts, mazeOpts) _ = mainRender opts (maze mazeOpts)
+
+instance Mainable (Maze (Animation SVG R2)) where
+   type MainOpts (Maze (Animation SVG R2)) = (MainOpts (Diagram SVG R2), (DiagramAnimOpts, MazeOpts))
+   mainRender (opts, (animOpts, mazeOpts)) _ = defaultAnimMainRender (_1 . output) (opts, animOpts) (animMaze mazeOpts)
+
+instance Mainable (Animation SVG R2) where
+   type MainOpts (Animation SVG R2) = (MainOpts (Diagram SVG R2), DiagramAnimOpts) 
+   mainRender = defaultAnimMainRender (_1 . output)
 
 --main = mainWith $ animEnvelope $ rotateBy (1/4) $ movie $ map animArcN [0..7]
-main = mainWith $ Maze maze
+main = mainWith $ Maze animMaze
 
 maze :: MazeOpts -> Diagram B R2
-maze opts = pad 1.01 $ rotateBy (1/4) $ res opts 7 
+maze opts = pad 1.01 $ rotateBy (1/4) $ res opts 7
+
+animMaze :: MazeOpts -> Animation B R2
+animMaze opts = animEnvelope $ rotateBy (1/4) $ movie $ map (animArcN opts) [0..7]
+
 
 animArcN :: MazeOpts -> Int -> Animation B R2
 animArcN opts n = (res opts (n-1) <>) <$> (animLT $ arcN' opts n) # lc green # lw 0.1
@@ -85,7 +101,10 @@ roundSeed :: Trail R2
 roundSeed = (arc' (0.5) (-0.25 @@ turn) (0.25 @@ turn)) 
 
 squareSeed :: Trail R2
-squareSeed = fromVertices [(1) ^& 0, 0 ^& 1, (-1) ^& 0]
+squareSeed = fromOffsets [1 ^& 0, 0 ^& 1, (-1) ^& 0]
+
+squareCutSeed :: Trail R2
+squareCutSeed = fromOffsets [0.5 ^& 0, 0.5 ^& 0.5, (-0.5) ^& 0.5, (-0.5) ^& 0]
 
 arcCaps' opts arcP (p1:p2:_) (r1:r2:_) = arcCaps opts arcP r2 r1 p2 p1
 arcCaps' _ _ _ _ = error "lists must contain at least 2 points each"
@@ -100,7 +119,7 @@ arcN' opts i = arcN (ptsList (seedPos opts)) opts i
 selectSeed :: MazeStyle -> Trail R2
 selectSeed Round     = roundSeed  
 selectSeed Square    = squareSeed
-selectSeed SquareCut = squareSeed
+selectSeed SquareCut = squareCutSeed
 
 posSeed :: Int -> Trail R2 -> Located (Trail R2)
 posSeed 0 tr = tr `at` (2 ^& 0)
@@ -185,9 +204,18 @@ capCut _r c a b = unLoc $ fromVertices [ a, a .+^ (v/2), b .+^ (v2/2),  b ] --, 
 capCut' :: Double -> P2 -> P2 -> P2 -> Trail R2
 capCut' _r _c a b = fromSegments [straight (b .-. a)]
 
-animMain :: Animation SVG R2 -> IO ()
-animMain = mainWith
+--instance Mainable (Animation SVG R2) where
+--   type MainOpts (Animation SVG R2) = (MainOpts (Diagram SVG R2), DiagramAnimOpts) 
+--   mainRender = defaultAnimMainRender (_1 . output)
 
-instance Mainable (Animation SVG R2) where
-   type MainOpts (Animation SVG R2) = (MainOpts (Diagram SVG R2), DiagramAnimOpts) 
-   mainRender = defaultAnimMainRender (_1 . output)
+instance Read LineJoin where
+   readPrec =
+    parens
+    ( do L.Ident s <- lexP
+         case s of
+           "Miter"  -> return LineJoinMiter
+           "Round" -> return LineJoinRound
+           "Bevel" -> return LineJoinBevel
+           _       -> pfail
+    )
+
