@@ -1,7 +1,7 @@
 
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Main where
 
@@ -18,8 +18,8 @@ import Options.Applicative hiding ((&))
 import Text.Read
 import qualified Text.Read.Lex as L
 
-data Maze = Maze {image      :: MazeOpts -> Diagram B R2, 
-                  animation  :: MazeOpts -> Animation B R2}
+data Maze a = Maze {image      :: MazeOpts -> a, 
+                    animation  :: MazeOpts -> Animation B R2}
 
 data MazeStyle = Round | Square | SquareCut
    deriving (Read, Show)
@@ -220,8 +220,13 @@ instance Parseable MazeOpts where
       <*> switch (short 'a' <> long "animation" 
           <> help "generate an animation")
 
-instance Mainable Maze where
-   type MainOpts Maze = (MainOpts (Diagram SVG R2), (DiagramAnimOpts, MazeOpts))
-   mainRender (opts, (animOpts, mazeOpts@(MazeOpts _ _ _ _ True))) _ = defaultAnimMainRender (_1 . output) (opts, animOpts) (animMaze mazeOpts)
-   mainRender (opts, (_, mazeOpts@(MazeOpts _ _ _ _ False))) _ = mainRender opts (maze mazeOpts) 
+instance Mainable (Maze (Diagram SVG R2)) where
+   type MainOpts (Maze (Diagram SVG R2)) = (MainOpts (Diagram SVG R2), DiagramAnimOpts, MazeOpts)
+   mainRender (opts, animOpts, mazeOpts@(MazeOpts _ _ _ _ True)) (Maze _ anim) = 
+      defaultAnimMainRender (_1 . output) (opts, animOpts) (anim mazeOpts)
+   mainRender (opts, _, mazeOpts@(MazeOpts _ _ _ _ False)) (Maze pic _) = mainRender opts (pic mazeOpts) 
 
+
+-- | Allow 'Parseable' things to be combined.
+instance (Parseable a, Parseable b, Parseable c) => Parseable (a,b,c) where
+     parser = (,,) <$> parser <*> parser <*> parser
