@@ -8,6 +8,8 @@ More info in this [blog post](http://www.corentindupont.info/blog/posts/2014-02-
 
 ## Install
 
+First install [haskell platform](http://www.haskell.org/platform/) and the HEAD of [diagrams](https://github.com/diagrams).
+
     git clone git@github.com:cdupont/CretanMaze.git
     cd CretanMaze
     ghc --make maze.hs -o maze
